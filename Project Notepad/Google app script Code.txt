@@ -1,0 +1,196 @@
+ESP32DATA.gs
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+function doGet(e) {
+  const result = {};
+
+  try {
+    // ตรวจสอบว่ามีพารามิเตอร์ที่ส่งมา
+    if (!e || !e.parameter) {
+      result.status = "Error";
+      result.message = "ไม่มีพารามิเตอร์ที่ส่งมา";
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const sheetId = '1nW9SZilokuZiSvCieDc3Scy1YyME4CyFSfuG_b8pkzk'; // Spreadsheet ID
+    const ss = SpreadsheetApp.openById(sheetId);
+
+    if (e.parameter.BoxID && e.parameter.relayStatus) {
+      // กรณี BoxID และ relayStatus -> บันทึกใน FAN DATA
+      const sheetName = "FAN DATA";
+      const sheet = ss.getSheetByName(sheetName);
+
+      if (!sheet) {
+        result.status = "Error";
+        result.message = `Sheet ${sheetName} ไม่พบ`;
+        Logger.log(result.message);
+        return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const currDate = Utilities.formatDate(new Date(), "Asia/Bangkok", "dd/MM/yyyy");
+      const currTime = Utilities.formatDate(new Date(), "Asia/Bangkok", "HH:mm:ss");
+      const relayStatus = e.parameter.relayStatus;
+      const BoxID = e.parameter.BoxID;
+
+      const rowData = [
+        currDate,    // คอลัมน์ A - วันที่
+        currTime,    // คอลัมน์ B - เวลา
+        relayStatus, // คอลัมน์ C - สถานะรีเลย์
+        BoxID        // คอลัมน์ D - BoxID
+      ];
+
+      const nextRow = sheet.getLastRow() + 1;
+      sheet.getRange(nextRow, 1, 1, rowData.length).setValues([rowData]);
+
+      result.status = "Success";
+      result.message = "บันทึกข้อมูลลงใน FAN DATA สำเร็จ";
+      Logger.log(`บันทึกข้อมูล FAN DATA ที่แถว: ${nextRow}, ข้อมูล: ${JSON.stringify(rowData)}`);
+
+    } else if (e.parameter.DeviceID) {
+      // กรณี DeviceID -> บันทึกใน DATA
+      const sheetName = "DATA";
+      const sheet = ss.getSheetByName(sheetName);
+
+      if (!sheet) {
+        result.status = "Error";
+        result.message = `Sheet ${sheetName} ไม่พบ`;
+        Logger.log(result.message);
+        return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const currDate = e.parameter.date || Utilities.formatDate(new Date(), "Asia/Bangkok", "dd/MM/yyyy");
+      const currTime = e.parameter.time || Utilities.formatDate(new Date(), "Asia/Bangkok", "HH:mm:ss");
+      const temp = parseFloat(e.parameter.temp || 0);
+      const humidity = parseFloat(e.parameter.humd || 0);
+      const DeviceID = e.parameter.DeviceID;
+
+      const rowData = [
+        currDate,      // คอลัมน์ A - วันที่
+        currTime,      // คอลัมน์ B - เวลา
+        temp,          // คอลัมน์ C - อุณหภูมิ
+        humidity,      // คอลัมน์ D - ความชื้น
+        DeviceID       // คอลัมน์ E - DeviceID
+      ];
+
+      const nextRow = sheet.getLastRow() + 1;
+      sheet.getRange(nextRow, 1, 1, rowData.length).setValues([rowData]);
+
+      result.status = "Success";
+      result.message = "บันทึกข้อมูล DeviceID สำเร็จ";
+      Logger.log(`บันทึกข้อมูล DeviceID สำเร็จที่แถว: ${nextRow}, ข้อมูล: ${JSON.stringify(rowData)}`);
+
+    } else {
+      result.status = "Error";
+      result.message = "ไม่มีพารามิเตอร์ที่ต้องการ";
+      Logger.log(result.message);
+    }
+  } catch (error) {
+    result.status = "Error";
+    result.message = `เกิดข้อผิดพลาด: ${error.message}`;
+    Logger.log(result.message);
+  }
+
+  // ส่งผลลัพธ์กลับในรูปแบบ JSON
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+calculateAverage
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------// ฟังก์ชันหลักสำหรับคำนวณและบันทึกเฉพาะค่าเฉลี่ย
+function calculateAndSendToFirebase() {
+  const sheet = SpreadsheetApp.openById('1nW9SZilokuZiSvCieDc3Scy1YyME4CyFSfuG_b8pkzk').getSheetByName("DATA");
+  const rowsToUse = getLastValidRows(sheet, 3); // ดึงข้อมูลสมบูรณ์ 3 แถวล่าสุด
+
+  if (rowsToUse.length === 0) {
+    Logger.log("Error: ไม่มีข้อมูลที่สามารถใช้คำนวณได้.");
+    return;
+  }
+
+  const { avgTemp, avgHumd } = calculateAverage(rowsToUse);
+  const avgDate = Utilities.formatDate(new Date(), "Asia/Jakarta", "dd/MM/yyyy");
+  const avgTime = Utilities.formatDate(new Date(), "Asia/Jakarta", "HH:mm:ss");
+
+  // หาตำแหน่งแถวสุดท้ายในคอลัมน์ H-L
+  const avgLastRow = findLastRowInColumns(sheet, 8, 8) + 1;
+
+  // บันทึกค่าเฉลี่ยลงใน Google Sheets
+  sheet.getRange(avgLastRow, 8, 1, 5).setValues([[avgDate, avgTime, "Calculated", avgTemp, avgHumd]]);
+
+  // ส่งข้อมูลไปยัง Firebase
+  sendToFirebase({ avgDate, avgTime, avgTemp, avgHumd });
+
+  Logger.log("=== ข้อมูลที่ใช้ในการคำนวณค่าเฉลี่ย ===");
+  rowsToUse.forEach((row, index) => {
+    Logger.log(`แถว ${index + 1}: วันที่ ${row[0]}, เวลา ${row[1]}, อุณหภูมิ ${row[3]}, ความชื้น ${row[4]}`);
+  });
+  Logger.log("=== ผลลัพธ์ ===");
+  Logger.log(`ค่าเฉลี่ยอุณหภูมิ: ${avgTemp}, ค่าเฉลี่ยความชื้น: ${avgHumd}`);
+}
+
+// ฟังก์ชันดึงข้อมูลแถวล่าสุดที่สมบูรณ์
+function getLastValidRows(sheet, count) {
+  const data = sheet.getDataRange().getValues();
+  const validRows = data.filter(row => {
+    return row[0] && row[1] && // วันที่และเวลา
+      !isNaN(row[3]) && row[3] !== "" && // อุณหภูมิ
+      !isNaN(row[4]) && row[4] !== ""; // ความชื้น
+  });
+  return validRows.slice(-count); // ใช้แถวที่สมบูรณ์ล่าสุดจำนวน `count` แถว
+}
+
+// ฟังก์ชันคำนวณค่าเฉลี่ย
+function calculateAverage(rows) {
+  let tempSum = 0, tempCount = 0;
+  let humdSum = 0, humdCount = 0;
+
+  rows.forEach(row => {
+    const temp = parseFloat(row[3]);
+    const humd = parseFloat(row[4]);
+    if (!isNaN(temp)) {
+      tempSum += temp;
+      tempCount++;
+    }
+    if (!isNaN(humd)) {
+      humdSum += humd;
+      humdCount++;
+    }
+  });
+
+  const avgTemp = tempCount > 0 ? parseFloat((tempSum / tempCount).toFixed(2)) : 0;
+  const avgHumd = humdCount > 0 ? parseFloat((humdSum / humdCount).toFixed(2)) : 0;
+
+  return { avgTemp, avgHumd };
+}
+
+// ฟังก์ชันช่วยค้นหาแถวสุดท้ายในคอลัมน์ H-L
+function findLastRowInColumns(sheet, startColumn, endColumn) {
+  const range = sheet.getRange(1, startColumn, sheet.getLastRow(), endColumn - startColumn + 1);
+  const values = range.getValues();
+
+  let lastRow = 0;
+  for (let row = 0; row < values.length; row++) {
+    if (values[row].some(cell => cell !== "")) {
+      lastRow = row + 1;
+    }
+  }
+
+  return lastRow; // คืนค่าแถวสุดท้ายที่มีข้อมูลในช่วงคอลัมน์
+}
+
+// ฟังก์ชันส่งข้อมูลไป Firebase
+function sendToFirebase(dataToSend) {
+  const firebaseUrl = "https://smart-fan-control-default-rtdb.asia-southeast1.firebasedatabase.app/averageData/AVG.json?auth=lbV0zRvKUAhVUiNhsBPZwvyFXUMWILtLdCaO6n3K";
+  const options = {
+    method: "patch",
+    payload: JSON.stringify(dataToSend),
+    contentType: "application/json",
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(firebaseUrl, options);
+    Logger.log(`ข้อมูลส่งไป Firebase สำเร็จ: ${response.getContentText()}`);
+  } catch (error) {
+    Logger.log(`เกิดข้อผิดพลาดในการส่งข้อมูลไป Firebase: ${error.message}`);
+  }
+}
+----------------------------------------------------------------------------------------------------------------------------------------------------------

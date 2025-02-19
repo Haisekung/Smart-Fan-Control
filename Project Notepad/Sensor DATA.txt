@@ -1,0 +1,166 @@
+Google Sheets Project Name      : Smart Fan Control
+Google Sheets ID                : 1nW9SZilokuZiSvCieDc3Scy1YyME4CyFSfuG_b8pkzk
+Web app URL                                          : https://script.google.com/macros/s/AKfycbxG4NhkHVEz7NgBuwQxHJVstfGzdIUDvL0FHBDmGi2kGaqby-6nH4uPYRYIObvyf9uuEg/exec
+Google Apps Script Project Name : Smart Fan Control
+รหัสการทำให้ใช้งานได้                 : AKfycbxG4NhkHVEz7NgBuwQxHJVstfGzdIUDvL0FHBDmGi2kGaqby-6nH4uPYRYIObvyf9uuEg
+Web app URL Test Write : 
+https://script.google.com/macros/s/AKfycbxG4NhkHVEz7NgBuwQxHJVstfGzdIUDvL0FHBDmGi2kGaqby-6nH4uPYRYIObvyf9uuEg/exec?sts=write&temp=32.5&humd=95&deviceid=2
+
+Web app URL Test Read  : 
+https://script.google.com/macros/s/AKfycbxG4NhkHVEz7NgBuwQxHJVstfGzdIUDvL0FHBDmGi2kGaqby-6nH4uPYRYIObvyf9uuEg/exec?sts=read
+const char* ssid = "Tenda_B2D1B0";
+const char* password = "most8475";
+คำสั่ง Reset ESP32 ของSensor 1: http://192.168.0.102/reset
+คำสั่ง Reset ESP32 ของSensor 2:
+
+Sensor Dectector Code
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+#include "WiFi.h"
+#include <HTTPClient.h>
+#include "DHT.h"
+
+// กำหนด PIN ของ DHT22 และประเภทเซ็นเซอร์
+#define DHTPIN 4
+#define DHTTYPE DHT22
+
+// ข้อมูลการเชื่อมต่อ Wi-Fi
+const char* ssid = "Haise";
+const char* password = "0953067280";
+
+// URL ของ Google Apps Script
+String Web_App_URL = "https://script.google.com/macros/s/AKfycbxG4NhkHVEz7NgBuwQxHJVstfGzdIUDvL0FHBDmGi2kGaqby-6nH4uPYRYIObvyf9uuEg/exec";
+
+// ตัวแปรเซ็นเซอร์
+String Status_Read_Sensor = "";
+float Temp = 0.0;
+int Humd = 0;
+String DeviceID = "4";
+unsigned long lastSendTime = 0;
+
+DHT dht(DHTPIN, DHTTYPE);
+
+// ฟังก์ชันนับถอยหลัง **(หยุดถ้า WiFi เชื่อมต่อได้)**
+bool countdown(int seconds, String reason) {
+    Serial.println("====================================");
+    Serial.println("[System] " + reason);
+
+    for (int i = seconds; i > 0; i--) {
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("[System] WiFi connected! Cancelling countdown.");
+            return true;  // หยุดนับถอยหลัง และออกจากฟังก์ชัน
+        }
+        Serial.printf("[System] Reset in %d seconds...\n", i);
+        delay(1000);
+    }
+    return false;  // ถ้านับจนจบ แสดงว่าต้องรีสตาร์ท
+}
+
+// ฟังก์ชันเชื่อมต่อ WiFi **(นับถอยหลัง 30 วิระหว่างเชื่อมต่อ)**
+void connectToWiFi() {
+    Serial.println("[WiFi] Connecting to WiFi...");
+    WiFi.begin(ssid, password);
+
+    if (!countdown(30, "[WiFi] Connection failed! Restarting ESP32...")) {
+        Serial.println("[System] Restarting ESP32...");
+        ESP.restart();
+    }
+    Serial.println("[WiFi] WiFi connected successfully.");
+}
+
+// ฟังก์ชันตรวจสอบ WiFi **(ถ้าหลุดให้ Reset ภายใน 5 วินาที)**
+void checkWiFiConnection() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[System] [WiFi] Connection lost! Restarting ESP32 in 5 seconds...");
+        countdown(5, "[WiFi] Lost connection! Restarting ESP32...");
+        Serial.println("[System] Restarting ESP32...");
+        ESP.restart();
+    }
+}
+
+// ฟังก์ชันอ่านค่า DHT22
+void readSensorData() {
+    Serial.println("[Sensor] Reading data from DHT22...");
+    float newHumd = dht.readHumidity();
+    float newTemp = dht.readTemperature();
+
+    if (isnan(newHumd) || isnan(newTemp)) {
+        Serial.println("[Sensor] Failed to read data! Using last valid values...");
+        Status_Read_Sensor = "Failed";
+
+        // ✅ ใช้ค่าล่าสุดแทนถ้าค่าอ่านไม่ได้
+        newHumd = Humd;
+        newTemp = Temp;
+
+        // ✅ รีเซ็ต DHT22 และลองอ่านค่าใหม่อีกครั้ง
+        Serial.println("[Sensor] Restarting DHT22...");
+        dht.begin();
+        delay(2000);  // รอให้เซ็นเซอร์เริ่มต้นใหม่
+
+        float retryHumd = dht.readHumidity();
+        float retryTemp = dht.readTemperature();
+
+        if (!isnan(retryHumd) && !isnan(retryTemp)) {
+            Humd = retryHumd;
+            Temp = retryTemp;
+            Status_Read_Sensor = "Success after reset";
+            Serial.printf("[Sensor] Temp: %.2f°C, Humidity: %d%% (after reset)\n", Temp, Humd);
+        } else {
+            Serial.println("[Sensor] Still failed to read data after reset.");
+        }
+    } else {
+        // ✅ อัปเดตค่าปกติ ถ้าอ่านได้
+        Status_Read_Sensor = "Success";
+        Humd = newHumd;
+        Temp = newTemp;
+        Serial.printf("[Sensor] Temp: %.2f°C, Humidity: %d%%\n", Temp, Humd);
+    }
+}
+
+// ฟังก์ชันส่งข้อมูลไปยัง Google Sheets
+void sendDataToGoogleSheets() {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        String Send_Data_URL = Web_App_URL + "?sts=write&srs=" + Status_Read_Sensor +
+                               "&temp=" + String(Temp, 2) + "&humd=" + String(Humd) +
+                               "&deviceid=" + DeviceID;
+
+        Serial.println("[HTTP] Sending request to: " + Send_Data_URL);
+        http.begin(Send_Data_URL.c_str());
+        int httpCode = http.GET();
+
+        if (httpCode > 0) {
+            Serial.printf("[HTTP] Response code: %d\n", httpCode);
+        } else {
+            Serial.printf("[HTTP] Request failed. Error code: %d\n", httpCode);
+        }
+        http.end();
+    } else {
+        Serial.println("[HTTP] WiFi not connected. Data not sent.");
+    }
+}
+
+// ฟังก์ชันเริ่มต้น
+void setup() {
+    Serial.begin(115200);
+    Serial.println("[System] ESP32 Booting up...");
+    WiFi.mode(WIFI_STA);
+    dht.begin();
+    connectToWiFi();
+}
+
+// ฟังก์ชันหลัก ทำงานทุก 15 นาที
+void loop() {
+    checkWiFiConnection();  // ตรวจสอบ WiFi ตลอดเวลา
+
+    Serial.println("[System] Starting new cycle...");
+    readSensorData();
+    sendDataToGoogleSheets();
+
+    lastSendTime = millis();
+
+    while (millis() - lastSendTime < 900000) {  // รอ 15 นาที
+        checkWiFiConnection();
+        delay(5000);
+    }
+}
+----------------------------------------------------------------------------------------------------------------------------------------------------------

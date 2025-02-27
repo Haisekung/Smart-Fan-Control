@@ -1,0 +1,18 @@
+function setRelayStatusOff() {
+  const firebaseUrl = "https://smart-fan-control-default-rtdb.asia-southeast1.firebasedatabase.app/relayData/1.json?auth=lbV0zRvKUAhVUiNhsBPZwvyFXUMWILtLdCaO6n3K";
+
+  const dataToSend = { RelayStatus: "OFF", Time: new Date().toISOString() };
+
+  const options = {
+    method: "patch",
+    payload: JSON.stringify(dataToSend),
+    contentType: "application/json",
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(firebaseUrl, options);
+    Logger.log(`✅ อัปเดต RelayStatus เป็น "OFF" สำเร็จ: ${response.getContentText()}`);
+  } catch (error) {
+    Logger.log(`❌ เกิดข้อผิดพลาดในการอัปเดต RelayStatus: ${error.message}`);
+  }
+}
